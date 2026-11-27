@@ -70,6 +70,7 @@ cat > "$H3_POD_DIR/models.json" <<'H3_EMBED_MODELS_JSON'
     {
       "repo": "TenStrip/10Eros-Max",
       "revision": "8a198588c8870ab0d613b3492a3150d091c8c2dd",
+      "hf_path": "10Eros_Max_h3_TURBO-hybrid_beta5_w4a8_14gb_optimized.safetensors",
       "path": "diffusion_models/10Eros_Max_h3_TURBO-hybrid_beta5_w4a8_14gb_optimized.safetensors",
       "size": 13997668774,
       "sha256": "a8067999c65594b462d581c02b8a0573dd42d9812a14c586150a947c13388f2e"
@@ -111,6 +112,18 @@ CLIP='qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors'
 VAE='minimax_h3_video_vae_fp16.safetensors'
 AUDIO='minimax_h3_audio_vae_fp32.safetensors'
 
+SIZE_NOTE="""| megapixels | Aspect | Output (multiple=32) |
+|---|---|---|
+| 0.2 | 16:9 | 608 x 352 |
+| 0.3 | 16:9 | 736 x 416 |
+| 0.4 | 16:9 | 864 x 480 |
+| 0.5 | 16:9 | 960 x 544 |
+| 0.6 | 16:9 | 1056 x 608 |
+| 0.7 | 16:9 | 1152 x 640 |
+| 0.8 | 16:9 | 1216 x 672 |
+| 0.9 | 16:9 | 1280 x 736 |
+| 0.98 | 16:9 | 1344 x 768 (official 768p) |"""
+
 def build():
     prompt='A ceramic mug on a wooden table. The camera moves slowly closer. Soft room ambience, no dialogue, no music.'
     specs=[
@@ -119,7 +132,11 @@ def build():
      (4,'VAELoader',{'vae_name':VAE},['VAE'],[VAE],[0,430]),
      (5,'VAELoader',{'vae_name':AUDIO},['VAE'],[AUDIO],[0,560]),
      (6,'LoadImage',{'image':'h3-10eros-example.png'},['IMAGE','MASK'],['h3-10eros-example.png','image'],[0,720]),
-     (7,'MiniMaxH3ImageToVideo',{'clip':[3,0],'vae':[4,0],'prompt':prompt,'width':640,'height':384,'length':56,'first_frame':[6,0]},['CONDITIONING','LATENT'],[prompt,640,384,56],[740,240]),
+     (17,'ImageScaleToTotalPixels',{'image':[6,0],'upscale_method':'nearest-exact','megapixels':0.4,'resolution_steps':32},['IMAGE'],['nearest-exact',0.4,32],[370,240]),
+     (18,'GetImageSize',{'image':[17,0]},['INT','INT','INT'],[],[370,900]),
+     (7,'MiniMaxH3ImageToVideo',{'clip':[3,0],'vae':[4,0],'prompt':prompt,'width':[18,0],'height':[18,1],'length':[20,1],'first_frame':[17,0]},['CONDITIONING','LATENT'],[prompt,864,480,243],[740,240]),
+     (19,'PrimitiveFloat',{'value':10.0},['FLOAT'],[10.0],[0,1080]),
+     (20,'ComfyMathExpression',{'expression':'max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17','values.a':[19,0]},['FLOAT','INT','BOOL'],['max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17'],[370,1080]),
      (8,'BasicGuider',{'model':[1,0],'conditioning':[7,0]},['GUIDER'],[],[1150,0]),
      (9,'RandomNoise',{'noise_seed':42},['NOISE'],[42,'fixed'],[740,0]),
      (10,'KSamplerSelect',{'sampler_name':'res_multistep'},['SAMPLER'],['res_multistep'],[1150,160]),
@@ -145,7 +162,8 @@ def build():
             targetslot=len(byid[i]['inputs']);links.append([lid,upstream,slot,i,targetslot,typ])
             byid[i]['inputs'].append({'name':name,'type':typ,'link':lid})
             byid[upstream]['outputs'][slot]['links'].append(lid)
-    return {'last_node_id':16,'last_link_id':len(links),'nodes':nodes,'links':links,'groups':[],
+    nodes.append({'id':21,'type':'MarkdownNote','pos':[0,900],'size':[330,380],'flags':{},'order':len(nodes),'mode':0,'inputs':[],'outputs':[],'title':'Note: Size Settings Reference','properties':{},'widgets_values':[SIZE_NOTE],'widgets_values_named':{'text':SIZE_NOTE},'color':'#222','bgcolor':'#000'})
+    return {'last_node_id':21,'last_link_id':len(links),'nodes':nodes,'links':links,'groups':[],
        'config':{},'extra':{'ds':{'scale':0.45,'offset':[30,100]}},'version':0.4},api
 
 def write(root):
@@ -335,7 +353,11 @@ def main():
         path=COMFY/'models'/spec['path']
         if matches(path,spec):print('Reuse verified: '+spec['path'],flush=True);continue
         print('Downloading '+spec['path']+' ('+str(round(spec['size']/1e9,2))+' GB)',flush=True)
-        downloaded=Path(hf_hub_download(repo_id=spec['repo'],filename=spec['path'],revision=spec['revision'],local_dir=COMFY/'models',force_download=path.exists()))
+        downloaded=Path(hf_hub_download(repo_id=spec['repo'],filename=spec.get('hf_path',spec['path']),revision=spec['revision'],local_dir=COMFY/'models',force_download=path.exists()))
+        if downloaded.resolve()!=path.resolve():
+            path.parent.mkdir(parents=True,exist_ok=True)
+            if path.exists():path.unlink()
+            downloaded.replace(path);downloaded=path
         if not matches(downloaded,spec):raise RuntimeError('Model integrity mismatch: '+spec['path'])
         print('SHA256 OK: '+spec['path'],flush=True)
     write(ROOT)
